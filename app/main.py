@@ -235,3 +235,29 @@ def partial_update_student(
         )
 
     return student
+
+
+@app.delete(
+    '/students/{stud_id}',
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_student(
+    stud_id:int,
+    db:Session = Depends(get_db)
+):
+    student = (
+        db.query(models.Student)
+        .filter(models.Student.id == stud_id)
+        .first()
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Student with ID {stud_id} not found"
+        )
+
+    db.delete(student)
+    db.commit()
+
+    return None
