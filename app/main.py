@@ -167,3 +167,71 @@ def student_update(
         )
 
     return student
+
+
+@app.patch(
+    '/students/{stud_id}',
+    response_model=StudentResponse
+)
+def partial_update_student(
+    stud_id:int,
+    student_data:StudentUpdate,
+    db:Session = Depends(get_db)
+):
+    student = (
+        db.query(models.Student)
+        .filter(models.Student.id == stud_id)
+        .first()
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Student with ID {stud_id} not found"
+        )
+
+    update_data = student_data.model_dump(exclude_unset=True)
+
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one field to update"
+        )
+
+    if any(value is None for value in update_data.values()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Student fields cannot be null"
+        )
+
+    if 'email' in update_data:
+        existing_email = (
+            db.query(models.Student)
+            .filter(
+                models.Student.email == update_data['email'],
+                models.Student.id != stud_id
+            ).first()
+        )
+
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already used by another student"
+            )
+
+    for field, value in update_data.items():
+        setattr(student,field,value)
+
+    try:
+        db.commit()
+        db.refresh(student)
+    
+    except IntegrityError:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Unable to update student due to a data conflict"
+        )
+
+    return student
