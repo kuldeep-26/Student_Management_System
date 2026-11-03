@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Depends, status, HTTPException
+from typing import Literal
+from fastapi import FastAPI, Depends, status, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
 from app import models
-from app.schemas import StudentCreate, StudentResponse, StudentUpdate
+from app.schemas import (StudentCreate, StudentResponse, StudentUpdate, StudentListResponse)
 
 Base.metadata.create_all(bind=engine)
 
@@ -26,11 +27,7 @@ def health_check():
         'status':'healthy'
     }
 
-@app.post(
-    '/students/',
-    response_model=StudentResponse,
-    status_code=status.HTTP_201_CREATED
-)
+@app.post('/students/', response_model=StudentResponse, status_code=status.HTTP_201_CREATED)
 def studentCreate(
     student: StudentCreate,
     db: Session = Depends(get_db)
@@ -78,17 +75,84 @@ def studentCreate(
     # Return the created student
     return new_student
 
-@app.get(
-    '/students/',
-    response_model=list[StudentResponse]
-)
+@app.get('/students/', response_model=StudentListResponse)
 def get_all_students(
+    search: str = None,
+    course: str = None,
+    min_age:int = None,
+    max_age:int = None,
+    
+    # pagination
+    skip:int = Query(default=0, ge=0),
+    limit:int = Query(default=10, ge=1, le=100),
+
+    # sorting
+    sort_by: Literal['id','name','age','course'] = 'id',
+    order: Literal['asc','desc'] = 'asc',
+
     db: Session = Depends(get_db)
 ):
-    
-    students = db.query(models.Student).all()
+    query = db.query(models.Student)
 
-    return students
+    # 1. Search by name or email
+    if search:
+        query = query.filter(
+            (models.Student.name.ilike(f"%{search}%")) |
+            (models.Student.email.ilike(f"%{search}%"))
+        )
+
+    # 2. Filter by course
+    if course:
+        query = query.filter(
+            models.Student.course.ilike(f"%{course}%")
+        )
+
+    # 3. Filter by minmum age
+    if min_age is not None:
+        query = query.filter(
+            models.Student.age >= min_age
+        )
+
+    # 4. Filter by maximum age
+    if max_age is not None:
+        query = query.filter(
+            models.Student.age <= max_age
+        )
+
+    # 5. Count matching records before pagination
+    total = query.count()
+
+    # 6. Select the sorting columns
+    sort_columns = {
+        'id': models.Student.id,
+        'name': models.Student.name,
+        'age': models.Student.age,
+        'course': models.Student.course
+    }
+
+    sort_column = sort_columns[sort_by]
+
+    # 7. Apply sorting
+    if order == 'asc':
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
+    # Use Id as a secondary sort for consistent pagination
+    if sort_by != id:
+        query = query.order_by(models.Student.id.asc())
+
+    # 8. Apply pagination
+    students = (
+        query.order_by(models.Student.id).offset(skip).limit(limit)
+    )
+
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "students": students
+    }
 
 @app.get(
     '/students/{stud_id}',
@@ -261,3 +325,4 @@ def delete_student(
     db.commit()
 
     return None
+
